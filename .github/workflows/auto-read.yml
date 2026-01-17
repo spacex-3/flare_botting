@@ -1,0 +1,80 @@
+name: Discourse Auto Read
+
+on:
+  schedule:
+    - cron: '0 */2 * * *'
+  workflow_dispatch:
+
+jobs:
+  auto-read:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          # Install ffmpeg only if recording is enabled
+          if [ "${{ vars.ENABLE_RECORDING }}" = "true" ]; then
+            sudo apt-get install -y ffmpeg
+          fi
+          pip install -r requirements.txt
+
+      - name: Run Auto Read
+        env:
+          TARGET_URL: ${{ secrets.TARGET_URL }}
+          USERNAME: ${{ secrets.USERNAME }}
+          PASSWORD: ${{ secrets.PASSWORD }}
+          COOKIE_STRING: ${{ secrets.COOKIE_STRING }}
+          TARGET_URL_2: ${{ secrets.TARGET_URL_2 }}
+          USERNAME_2: ${{ secrets.USERNAME_2 }}
+          PASSWORD_2: ${{ secrets.PASSWORD_2 }}
+          COOKIE_STRING_2: ${{ secrets.COOKIE_STRING_2 }}
+          MAX_TOPICS: ${{ vars.MAX_TOPICS || '10' }}
+          HEADLESS: false
+          LOGIN_TIMEOUT: 120
+          ENABLE_RECORDING: ${{ vars.ENABLE_RECORDING || 'false' }}
+        run: |
+          # Start Xvfb
+          export DISPLAY=:99
+          Xvfb :99 -screen 0 1920x1080x24 &
+          sleep 2
+          
+          mkdir -p debug_outputs
+          
+          # Start recording if enabled
+          if [ "$ENABLE_RECORDING" = "true" ]; then
+            echo "Recording enabled, starting ffmpeg..."
+            ffmpeg -f x11grab -video_size 1920x1080 -i :99 -codec:v libx264 -preset ultrafast -crf 28 -pix_fmt yuv420p debug_outputs/recording.mp4 &
+            FFMPEG_PID=$!
+          fi
+          
+          # Run the script
+          python main.py || true
+          
+          # Stop recording if it was started
+          if [ -n "$FFMPEG_PID" ]; then
+            sleep 2
+            kill $FFMPEG_PID || true
+            sleep 2
+          fi
+
+      - name: Upload debug artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-artifacts
+          path: debug_outputs/
+          if-no-files-found: ignore
