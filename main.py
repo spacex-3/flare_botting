@@ -380,64 +380,72 @@ class DiscourseAutoRead:
         liked = 0
         
         try:
-            # Selectors for Discourse Reactions plugin (used by linux.do)
-            # The plugin uses btn-toggle-reaction-like class
-            # Unliked buttons have SVG with d-icon-d-unliked class
-            like_selectors = [
-                # Discourse Reactions plugin selectors
-                "button.btn-toggle-reaction-like",
-                "button.reaction-button",
-                # Standard Discourse selectors (fallback)
-                "button.widget-button.like:not(.has-like):not(.my-likes)",
-                "button.toggle-like:not(.has-like):not(.my-likes)",
-            ]
+            # For Discourse Reactions plugin (used by linux.do)
+            # Target the parent container div instead of the button to avoid click interception
+            like_containers = []
             
-            like_buttons = []
-            for selector in like_selectors:
-                try:
-                    buttons = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                    for b in buttons:
-                        if b.is_displayed():
-                            # Check if button is not already liked
-                            # Liked buttons have d-icon-d-liked, unliked have d-icon-d-unliked
-                            try:
-                                svg = b.find_element(By.CSS_SELECTOR, "svg.d-icon-d-unliked")
-                                if svg:
-                                    like_buttons.append(b)
-                            except Exception:
-                                # For standard Discourse, check class names
-                                btn_class = b.get_attribute("class") or ""
-                                if "has-like" not in btn_class and "my-likes" not in btn_class:
-                                    like_buttons.append(b)
-                except Exception:
-                    continue
+            # Primary selector: the parent container that receives clicks
+            try:
+                containers = self.driver.find_elements(
+                    By.CSS_SELECTOR, "div.discourse-reactions-reaction-button"
+                )
+                for c in containers:
+                    if c.is_displayed():
+                        # Check if not already liked by looking for unliked icon
+                        try:
+                            svg = c.find_element(By.CSS_SELECTOR, "svg.d-icon-d-unliked")
+                            if svg:
+                                like_containers.append(c)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
             
-            if not like_buttons:
+            # Fallback: Standard Discourse selectors
+            if not like_containers:
+                fallback_selectors = [
+                    "button.widget-button.like:not(.has-like):not(.my-likes)",
+                    "button.toggle-like:not(.has-like):not(.my-likes)",
+                ]
+                for selector in fallback_selectors:
+                    try:
+                        buttons = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                        like_containers.extend([b for b in buttons if b.is_displayed()])
+                    except Exception:
+                        continue
+            
+            if not like_containers:
                 logger.info("No likeable posts found.")
                 return
             
-            logger.info(f"Found {len(like_buttons)} likeable posts.")
+            logger.info(f"Found {len(like_containers)} likeable posts.")
             
             # Remove duplicates and shuffle
             seen_ids = set()
-            unique_buttons = []
-            for b in like_buttons:
-                btn_id = id(b)
-                if btn_id not in seen_ids:
-                    seen_ids.add(btn_id)
-                    unique_buttons.append(b)
-            random.shuffle(unique_buttons)
+            unique_elements = []
+            for elem in like_containers:
+                elem_id = id(elem)
+                if elem_id not in seen_ids:
+                    seen_ids.add(elem_id)
+                    unique_elements.append(elem)
+            random.shuffle(unique_elements)
             
-            for button in unique_buttons[:like_count]:
+            for element in unique_elements[:like_count]:
                 try:
-                    # Scroll to button
+                    # Scroll to element
                     self.driver.execute_script(
                         "arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});",
-                        button
+                        element
                     )
                     time.sleep(random.uniform(0.5, 1.0))
                     
-                    button.click()
+                    # Try regular click first
+                    try:
+                        element.click()
+                    except Exception:
+                        # Fallback to JavaScript click if regular click fails
+                        self.driver.execute_script("arguments[0].click();", element)
+                    
                     liked += 1
                     logger.info(f"Liked post {liked}/{like_count}")
                     
