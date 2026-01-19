@@ -380,18 +380,35 @@ class DiscourseAutoRead:
         liked = 0
         
         try:
-            # Find all likeable buttons (not already liked)
+            # Selectors for Discourse Reactions plugin (used by linux.do)
+            # The plugin uses btn-toggle-reaction-like class
+            # Unliked buttons have SVG with d-icon-d-unliked class
             like_selectors = [
+                # Discourse Reactions plugin selectors
+                "button.btn-toggle-reaction-like",
+                "button.reaction-button",
+                # Standard Discourse selectors (fallback)
                 "button.widget-button.like:not(.has-like):not(.my-likes)",
                 "button.toggle-like:not(.has-like):not(.my-likes)",
-                ".post-controls button.like:not(.has-like)",
             ]
             
             like_buttons = []
             for selector in like_selectors:
                 try:
                     buttons = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                    like_buttons.extend([b for b in buttons if b.is_displayed()])
+                    for b in buttons:
+                        if b.is_displayed():
+                            # Check if button is not already liked
+                            # Liked buttons have d-icon-d-liked, unliked have d-icon-d-unliked
+                            try:
+                                svg = b.find_element(By.CSS_SELECTOR, "svg.d-icon-d-unliked")
+                                if svg:
+                                    like_buttons.append(b)
+                            except Exception:
+                                # For standard Discourse, check class names
+                                btn_class = b.get_attribute("class") or ""
+                                if "has-like" not in btn_class and "my-likes" not in btn_class:
+                                    like_buttons.append(b)
                 except Exception:
                     continue
             
@@ -399,8 +416,16 @@ class DiscourseAutoRead:
                 logger.info("No likeable posts found.")
                 return
             
+            logger.info(f"Found {len(like_buttons)} likeable posts.")
+            
             # Remove duplicates and shuffle
-            unique_buttons = list({b.id: b for b in like_buttons}.values())
+            seen_ids = set()
+            unique_buttons = []
+            for b in like_buttons:
+                btn_id = id(b)
+                if btn_id not in seen_ids:
+                    seen_ids.add(btn_id)
+                    unique_buttons.append(b)
             random.shuffle(unique_buttons)
             
             for button in unique_buttons[:like_count]:
