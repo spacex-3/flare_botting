@@ -50,11 +50,11 @@ class DiscourseAutoRead:
             options.add_argument('--start-maximized')
             options.add_argument('--lang=zh-CN,zh,en-US,en')
             
-            logger.info("Launching undetected Chrome...")
+            logger.info("Launching undetected Chrome (v143)...")
             self.driver = uc.Chrome(
                 options=options,
                 use_subprocess=True,
-                version_main=None
+                version_main=143
             )
             self.driver.set_page_load_timeout(60)
             
