@@ -47,6 +47,7 @@ jobs:
           HEADLESS: false
           LOGIN_TIMEOUT: 120
           ENABLE_RECORDING: ${{ vars.ENABLE_RECORDING || 'false' }}
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
         run: |
           # Start Xvfb
           export DISPLAY=:99

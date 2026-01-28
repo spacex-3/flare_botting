@@ -2,6 +2,8 @@ import os
 import random
 import time
 import logging
+import requests
+import urllib.parse
 from dotenv import load_dotenv
 
 import undetected_chromedriver as uc
@@ -28,6 +30,12 @@ class DiscourseAutoRead:
         self.password = password
         self.cookie_str = cookie_str
         self.driver = None
+        # Statistics tracking
+        self.stats = {
+            'unread_topics': 0,
+            'new_topics': 0,
+            'total_likes': 0
+        }
 
     def start(self):
         """Main entry point"""
@@ -218,6 +226,7 @@ class DiscourseAutoRead:
                 
                 self.simulate_reading()
                 count += 1
+                self.stats['unread_topics'] = count
                 logger.info(f"Finished reading topic {count}/{max_topics}")
                 
             except Exception as e:
@@ -271,6 +280,7 @@ class DiscourseAutoRead:
                 
                 self.simulate_reading()
                 count += 1
+                self.stats['new_topics'] = count
                 logger.info(f"Finished reading new topic {count}/{max_new_topics}")
                 
             except Exception as e:
@@ -467,6 +477,7 @@ class DiscourseAutoRead:
                     self.driver.execute_script("arguments[0].click();", element)
                 
                 liked += 1
+                self.stats['total_likes'] += 1
                 logger.info(f"Liked post {liked}/{like_count}")
                 
                 # Random delay between likes
@@ -477,6 +488,62 @@ class DiscourseAutoRead:
                 continue
         
         logger.info(f"Successfully liked {liked} posts.")
+
+
+def send_pushplus_notification(total_stats, site_details):
+    """Send PushPlus notification with statistics"""
+    pushplus_token = os.getenv('PUSHPLUS_TOKEN')
+    if not pushplus_token:
+        logger.info("PUSHPLUS_TOKEN not set, skipping notification.")
+        return
+    
+    total_posts = total_stats['unread_topics'] + total_stats['new_topics']
+    total_likes = total_stats['total_likes']
+    
+    title = f"论坛刷帖完成 📖{total_posts}篇 ❤️{total_likes}赞"
+    
+    # Build HTML content
+    content_parts = [
+        "<h2>📊 统计汇总</h2>",
+        "<table border='1' cellpadding='8' cellspacing='0'>",
+        "<tr><th>项目</th><th>数量</th></tr>",
+        f"<tr><td>未读帖子</td><td>{total_stats['unread_topics']}</td></tr>",
+        f"<tr><td>新帖子</td><td>{total_stats['new_topics']}</td></tr>",
+        f"<tr><td>总阅读</td><td>{total_posts}</td></tr>",
+        f"<tr><td>总点赞</td><td>{total_likes}</td></tr>",
+        "</table>",
+    ]
+    
+    if site_details:
+        content_parts.append("<h2>📋 站点详情</h2>")
+        for site in site_details:
+            site_posts = site['unread_topics'] + site['new_topics']
+            content_parts.append(
+                f"<p><b>{site['url']}</b><br>"
+                f"阅读: {site_posts} (未读{site['unread_topics']} + 新帖{site['new_topics']}), "
+                f"点赞: {site['total_likes']}</p>"
+            )
+    
+    content = ''.join(content_parts)
+    
+    # URL encode parameters
+    encoded_title = urllib.parse.quote(title)
+    encoded_content = urllib.parse.quote(content)
+    
+    url = f"https://www.pushplus.plus/send?token={pushplus_token}&title={encoded_title}&content={encoded_content}&template=html"
+    
+    try:
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            result = response.json()
+            if result.get('code') == 200:
+                logger.info("PushPlus notification sent successfully!")
+            else:
+                logger.warning(f"PushPlus notification failed: {result.get('msg')}")
+        else:
+            logger.warning(f"PushPlus request failed: HTTP {response.status_code}")
+    except Exception as e:
+        logger.error(f"Failed to send PushPlus notification: {e}")
 
 
 def main():
@@ -502,6 +569,10 @@ def main():
         logger.error("No TARGET_URL found.")
         return
     
+    # Collect stats from all sites
+    total_stats = {'unread_topics': 0, 'new_topics': 0, 'total_likes': 0}
+    site_details = []
+    
     for cfg in configs:
         logger.info(f"Starting auto-read for: {cfg['url']}")
         try:
@@ -512,8 +583,22 @@ def main():
                 cookie_str=cfg.get('cookie')
             )
             bot.start()
+            
+            # Aggregate stats
+            total_stats['unread_topics'] += bot.stats['unread_topics']
+            total_stats['new_topics'] += bot.stats['new_topics']
+            total_stats['total_likes'] += bot.stats['total_likes']
+            
+            site_details.append({
+                'url': cfg['url'],
+                **bot.stats
+            })
+            
         except Exception as e:
             logger.error(f"Error processing {cfg['url']}: {e}")
+    
+    # Send notification after all sites are processed
+    send_pushplus_notification(total_stats, site_details)
 
 
 if __name__ == "__main__":
